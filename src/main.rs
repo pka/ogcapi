@@ -1,60 +1,104 @@
-use actix_web::{error, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer};
-use bytes::{Bytes, BytesMut};
-use futures::StreamExt;
-use json::JsonValue;
-use serde::{Deserialize, Serialize};
+use actix_web::{middleware, web, App, HttpResponse, HttpServer};
+use serde::Serialize;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct MyObj {
-    name: String,
-    number: i32,
+#[derive(Debug, Serialize)]
+/// http://docs.opengeospatial.org/is/17-069r3/17-069r3.html#_api_landing_page
+struct CoreLandingPage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    links: Vec<ApiLink>,
 }
 
-/// This handler uses json extractor
-async fn index(item: web::Json<MyObj>) -> HttpResponse {
-    println!("model: {:?}", &item);
-    HttpResponse::Ok().json(item.0) // <- send response
+#[derive(Debug, Serialize)]
+/// http://schemas.opengis.net/ogcapi/features/part1/1.0/openapi/schemas/link.yaml
+struct ApiLink {
+    href: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rel: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    type_: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hreflang: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    length: Option<u64>,
 }
 
-/// This handler uses json extractor with limit
-async fn extract_item(item: web::Json<MyObj>, req: HttpRequest) -> HttpResponse {
-    println!("request: {:?}", req);
-    println!("model: {:?}", item);
-
-    HttpResponse::Ok().json(item.0) // <- send json response
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// http://docs.opengeospatial.org/is/17-069r3/17-069r3.html#_declaration_of_conformance_classes
+struct CoreConformsTo {
+    conforms_to: Vec<String>,
 }
 
-const MAX_SIZE: usize = 262_144; // max payload size is 256k
-
-/// This handler manually load request payload and parse json object
-async fn index_manual(mut payload: web::Payload) -> Result<HttpResponse, Error> {
-    // payload is a stream of Bytes objects
-    let mut body = BytesMut::new();
-    while let Some(chunk) = payload.next().await {
-        let chunk = chunk?;
-        // limit max size of in-memory payload
-        if (body.len() + chunk.len()) > MAX_SIZE {
-            return Err(error::ErrorBadRequest("overflow"));
-        }
-        body.extend_from_slice(&chunk);
-    }
-
-    // body is loaded, now we can deserialize serde-json
-    let obj = serde_json::from_slice::<MyObj>(&body)?;
-    Ok(HttpResponse::Ok().json(obj)) // <- send response
+#[derive(Debug, Serialize)]
+/// http://docs.opengeospatial.org/is/17-069r3/17-069r3.html#_collections_
+struct CoreCollections {
+    links: Vec<ApiLink>,
+    collections: Vec<CoreCollection>,
 }
 
-/// This handler manually load request payload and parse json-rust
-async fn index_mjsonrust(body: Bytes) -> Result<HttpResponse, Error> {
-    // body is loaded, now we can deserialize json-rust
-    let result = json::parse(std::str::from_utf8(&body).unwrap()); // return Result
-    let injson: JsonValue = match result {
-        Ok(v) => v,
-        Err(e) => json::object! {"err" => e.to_string() },
+#[derive(Debug, Serialize)]
+struct CoreCollection {}
+
+async fn index() -> HttpResponse {
+    let root = CoreLandingPage {
+        title: Some("Buildings in Bonn".to_string()),
+        description: Some("Access to data about buildings in the city of Bonn via a Web API that conforms to the OGC API Features specification".to_string()),
+        links: vec![ApiLink {
+            href: "http://data.example.org/".to_string(),
+            rel: Some("self".to_string()),
+            type_: Some("application/json".to_string()),
+            title: Some("this document".to_string()),
+            hreflang: None,
+            length: None
+        },
+        ApiLink {
+            href: "http://data.example.org/conformance".to_string(),
+            rel: Some("conformance".to_string()),
+            type_: Some("application/json".to_string()),
+            title: Some("OGC API conformance classes implemented by this server".to_string()),
+            hreflang: None,
+            length: None
+        },
+        ApiLink {
+            href: "http://data.example.org/collections".to_string(),
+            rel: Some("data".to_string()),
+            type_: Some("application/json".to_string()),
+            title: Some("Information about the feature collections".to_string()),
+            hreflang: None,
+            length: None
+        }]
     };
-    Ok(HttpResponse::Ok()
-        .content_type("application/json")
-        .body(injson.dump()))
+    HttpResponse::Ok().json(root)
+}
+
+async fn conformance() -> HttpResponse {
+    let root = CoreConformsTo {
+        conforms_to: vec![
+            "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/core".to_string(),
+            "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson".to_string(),
+        ],
+    };
+    HttpResponse::Ok().json(root)
+}
+
+async fn collections() -> HttpResponse {
+    let root = CoreCollections {
+        links: vec![ApiLink {
+            href: "http://data.example.org/collections.json".to_string(),
+            rel: Some("self".to_string()),
+            type_: Some("application/json".to_string()),
+            title: Some("this document".to_string()),
+            hreflang: None,
+            length: None,
+        }],
+        collections: vec![],
+    };
+    HttpResponse::Ok().json(root)
 }
 
 #[actix_rt::main]
@@ -64,18 +108,10 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(|| {
         App::new()
-            // enable logger
             .wrap(middleware::Logger::default())
-            .data(web::JsonConfig::default().limit(4096)) // <- limit size of the payload (global configuration)
-            .service(web::resource("/extractor").route(web::post().to(index)))
-            .service(
-                web::resource("/extractor2")
-                    .data(web::JsonConfig::default().limit(1024)) // <- limit size of the payload (resource level)
-                    .route(web::post().to(extract_item)),
-            )
-            .service(web::resource("/manual").route(web::post().to(index_manual)))
-            .service(web::resource("/mjsonrust").route(web::post().to(index_mjsonrust)))
-            .service(web::resource("/").route(web::post().to(index)))
+            .service(web::resource("/").route(web::get().to(index)))
+            .service(web::resource("/conformance").route(web::get().to(conformance)))
+            .service(web::resource("/collections").route(web::get().to(collections)))
     })
     .bind("127.0.0.1:8080")?
     .run()
@@ -86,21 +122,15 @@ async fn main() -> std::io::Result<()> {
 mod tests {
     use super::*;
     use actix_web::dev::Service;
-    use actix_web::{http, test, web, App};
+    use actix_web::{http, test, web, App, Error};
 
     #[actix_rt::test]
     async fn test_index() -> Result<(), Error> {
         let mut app =
-            test::init_service(App::new().service(web::resource("/").route(web::post().to(index))))
+            test::init_service(App::new().service(web::resource("/").route(web::get().to(index))))
                 .await;
 
-        let req = test::TestRequest::post()
-            .uri("/")
-            .set_json(&MyObj {
-                name: "my-name".to_owned(),
-                number: 43,
-            })
-            .to_request();
+        let req = test::TestRequest::get().uri("/").to_request();
         let resp = app.call(req).await.unwrap();
 
         assert_eq!(resp.status(), http::StatusCode::OK);
@@ -110,7 +140,7 @@ mod tests {
             _ => panic!("Response error"),
         };
 
-        assert_eq!(response_body, r##"{"name":"my-name","number":43}"##);
+        assert_eq!(response_body, "{\"title\":\"Buildings in Bonn\",\"description\":\"Access to data about buildings in the city of Bonn via a Web API that conforms to the OGC API Features specification\",\"links\":[{\"href\":\"http://data.example.org/\",\"rel\":\"self\",\"type\":\"application/json\",\"title\":\"this document\"},{\"href\":\"http://data.example.org/conformance\",\"rel\":\"conformance\",\"type\":\"application/json\",\"title\":\"OGC API conformance classes implemented by this server\"},{\"href\":\"http://data.example.org/collections\",\"rel\":\"data\",\"type\":\"application/json\",\"title\":\"Information about the feature collections\"}]}");
 
         Ok(())
     }
