@@ -1,4 +1,4 @@
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
+use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -44,12 +44,17 @@ struct CoreCollections {
 #[derive(Debug, Serialize)]
 struct CoreCollection {}
 
-async fn index() -> HttpResponse {
+fn absurl(req: &HttpRequest, path: &str) -> String {
+    let conninfo = req.connection_info();
+    format!("{}://{}{}", conninfo.scheme(), conninfo.host(), path)
+}
+
+async fn index(req: HttpRequest) -> HttpResponse {
     let root = CoreLandingPage {
         title: Some("Buildings in Bonn".to_string()),
         description: Some("Access to data about buildings in the city of Bonn via a Web API that conforms to the OGC API Features specification".to_string()),
         links: vec![ApiLink {
-            href: "http://data.example.org/".to_string(),
+            href: absurl(&req, "/"),
             rel: Some("self".to_string()),
             type_: Some("application/json".to_string()),
             title: Some("this document".to_string()),
@@ -57,7 +62,7 @@ async fn index() -> HttpResponse {
             length: None
         },
         ApiLink {
-            href: "http://data.example.org/conformance".to_string(),
+            href: absurl(&req, "/conformance"),
             rel: Some("conformance".to_string()),
             type_: Some("application/json".to_string()),
             title: Some("OGC API conformance classes implemented by this server".to_string()),
@@ -65,7 +70,7 @@ async fn index() -> HttpResponse {
             length: None
         },
         ApiLink {
-            href: "http://data.example.org/collections".to_string(),
+            href: absurl(&req, "/collections"),
             rel: Some("data".to_string()),
             type_: Some("application/json".to_string()),
             title: Some("Information about the feature collections".to_string()),
@@ -86,10 +91,10 @@ async fn conformance() -> HttpResponse {
     HttpResponse::Ok().json(root)
 }
 
-async fn collections() -> HttpResponse {
+async fn collections(req: HttpRequest) -> HttpResponse {
     let root = CoreCollections {
         links: vec![ApiLink {
-            href: "http://data.example.org/collections.json".to_string(),
+            href: absurl(&req, "/collections.json"),
             rel: Some("self".to_string()),
             type_: Some("application/json".to_string()),
             title: Some("this document".to_string()),
