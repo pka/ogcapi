@@ -1,6 +1,8 @@
 use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use serde::Serialize;
 
+mod openapi;
+
 #[derive(Debug, Serialize)]
 /// http://docs.opengeospatial.org/is/17-069r3/17-069r3.html#_api_landing_page
 struct CoreLandingPage {
@@ -62,6 +64,14 @@ async fn index(req: HttpRequest) -> HttpResponse {
             length: None
         },
         ApiLink {
+            href: absurl(&req, "/api"),
+            rel: Some("service-desc".to_string()),
+            type_: Some("application/vnd.oai.openapi+json;version=3.0".to_string()),
+            title: Some("the API definition".to_string()),
+            hreflang: None,
+            length: None
+        },
+        ApiLink {
             href: absurl(&req, "/conformance"),
             rel: Some("conformance".to_string()),
             type_: Some("application/json".to_string()),
@@ -81,10 +91,18 @@ async fn index(req: HttpRequest) -> HttpResponse {
     HttpResponse::Ok().json(root)
 }
 
+// Test with https://editor.swagger.io/?url=http://localhost:8080/api
+async fn api(req: HttpRequest) -> HttpResponse {
+    HttpResponse::Ok()
+        .content_type("application/vnd.oai.openapi+json;version=3.0")
+        .body(openapi::OPEN_API_TEMPLATE.replace("https://data.example.org/", &absurl(&req, "/")))
+}
+
 async fn conformance() -> HttpResponse {
     let root = CoreConformsTo {
         conforms_to: vec![
             "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/core".to_string(),
+            "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30".to_string(),
             "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson".to_string(),
         ],
     };
@@ -94,7 +112,7 @@ async fn conformance() -> HttpResponse {
 async fn collections(req: HttpRequest) -> HttpResponse {
     let root = CoreCollections {
         links: vec![ApiLink {
-            href: absurl(&req, "/collections.json"),
+            href: absurl(&req, "/collections"),
             rel: Some("self".to_string()),
             type_: Some("application/json".to_string()),
             title: Some("this document".to_string()),
@@ -115,6 +133,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(middleware::Logger::default())
             .service(web::resource("/").route(web::get().to(index)))
+            .service(web::resource("/api").route(web::get().to(api)))
             .service(web::resource("/conformance").route(web::get().to(conformance)))
             .service(web::resource("/collections").route(web::get().to(collections)))
     })
@@ -145,7 +164,7 @@ mod tests {
             _ => panic!("Response error"),
         };
 
-        assert_eq!(response_body, "{\"title\":\"Buildings in Bonn\",\"description\":\"Access to data about buildings in the city of Bonn via a Web API that conforms to the OGC API Features specification\",\"links\":[{\"href\":\"http://data.example.org/\",\"rel\":\"self\",\"type\":\"application/json\",\"title\":\"this document\"},{\"href\":\"http://data.example.org/conformance\",\"rel\":\"conformance\",\"type\":\"application/json\",\"title\":\"OGC API conformance classes implemented by this server\"},{\"href\":\"http://data.example.org/collections\",\"rel\":\"data\",\"type\":\"application/json\",\"title\":\"Information about the feature collections\"}]}");
+        assert_eq!(response_body, "{\"title\":\"Buildings in Bonn\",\"description\":\"Access to data about buildings in the city of Bonn via a Web API that conforms to the OGC API Features specification\",\"links\":[{\"href\":\"http://localhost:8080/\",\"rel\":\"self\",\"type\":\"application/json\",\"title\":\"this document\"},{\"href\":\"http://localhost:8080/api\",\"rel\":\"service-desc\",\"type\":\"application/vnd.oai.openapi+json;version=3.0\",\"title\":\"the API definition\"},{\"href\":\"http://localhost:8080/conformance\",\"rel\":\"conformance\",\"type\":\"application/json\",\"title\":\"OGC API conformance classes implemented by this server\"},{\"href\":\"http://localhost:8080/collections\",\"rel\":\"data\",\"type\":\"application/json\",\"title\":\"Information about the feature collections\"}]}");
 
         Ok(())
     }
