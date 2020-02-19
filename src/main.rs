@@ -1,3 +1,4 @@
+mod db;
 mod ogcapi;
 mod openapi;
 #[cfg(test)]
@@ -5,6 +6,9 @@ mod tests;
 
 use crate::ogcapi::*;
 use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
+use deadpool_postgres::{Client, Pool};
+use dotenv::dotenv;
+use tokio_postgres::NoTls;
 
 fn absurl(req: &HttpRequest, path: &str) -> String {
     let conninfo = req.connection_info();
@@ -84,20 +88,56 @@ async fn collections(req: HttpRequest) -> HttpResponse {
     HttpResponse::Ok().json(root)
 }
 
+pub async fn db_query(db_pool: web::Data<Pool>) -> HttpResponse {
+    let client: Client = db_pool.get().await.unwrap();
+
+    let val = db::db_query(&client).await;
+
+    HttpResponse::Ok().json(val)
+}
+
+pub mod config {
+    pub use ::config::ConfigError;
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    pub struct Config {
+        pub server_addr: String,
+        pub pg: deadpool_postgres::Config,
+    }
+    impl Config {
+        pub fn from_env() -> Result<Self, ConfigError> {
+            let mut cfg = ::config::Config::new();
+            cfg.merge(::config::Environment::new()).unwrap();
+            cfg.try_into()
+        }
+    }
+}
+
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
+    dotenv().ok();
+
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
-    HttpServer::new(|| {
+    let config = config::Config::from_env().expect("Config::from_env");
+    let pool = config.pg.create_pool(NoTls).expect("create_pool");
+    // Test connection
+    pool.get().await.expect("Connection failed");
+
+    let server = HttpServer::new(move || {
         App::new()
+            .data(pool.clone())
             .wrap(middleware::Logger::default())
             .service(web::resource("/").route(web::get().to(index)))
             .service(web::resource("/api").route(web::get().to(api)))
             .service(web::resource("/conformance").route(web::get().to(conformance)))
             .service(web::resource("/collections").route(web::get().to(collections)))
+            .service(web::resource("/db").route(web::get().to(db_query)))
     })
-    .bind("127.0.0.1:8080")?
-    .run()
-    .await
+    .bind(config.server_addr.clone())?
+    .run();
+    println!("Server running at http://{}/", config.server_addr);
+
+    server.await
 }
