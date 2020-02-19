@@ -129,6 +129,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .data(pool.clone())
             .wrap(middleware::Logger::default())
+            .wrap(middleware::Compress::default())
             .service(web::resource("/").route(web::get().to(index)))
             .service(web::resource("/api").route(web::get().to(api)))
             .service(web::resource("/conformance").route(web::get().to(conformance)))
