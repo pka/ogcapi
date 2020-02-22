@@ -261,9 +261,16 @@ async fn feature(req: HttpRequest, path: web::Path<(String, String)>) -> HttpRes
 pub async fn db_query(db_pool: web::Data<Pool>) -> HttpResponse {
     let client: Client = db_pool.get().await.unwrap();
 
-    let val = db::db_query(&client).await;
+    let mut geojson = String::new();
+    // TODO:
+    // - Wrap Fetures in FeatureCollection
+    // - Add ',' after each Feature
+    // - Create HttpResponse stream
+    db::db_query(&client, |s| geojson.push_str(s)).await;
 
-    HttpResponse::Ok().json(val)
+    HttpResponse::Ok()
+        .content_type("application/geo+json")
+        .body(geojson)
 }
 
 pub mod config {
